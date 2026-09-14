@@ -7,6 +7,7 @@ aloud in a cloned voice. No cloud, no API keys; renders on your machine.
 
 ```bash
 bash setup.sh          # clones AuK, makes venv, downloads AuK-Flash + Qwen2.5-Omni-3B (~6-9 GB)
+                       # needs Python >= 3.10 (checked; brew hint on failure). MPS is picked automatically.
 cp ~/.config/auk-voice/config.example.toml ~/.config/auk-voice/config.toml   # if not already created
 cp your-voice-sample.wav ~/.config/auk-voice/voices/default.wav   # 3-15 s clean speech
 python3 server.py      # leave running? No — the GUI launches it on demand (below)
