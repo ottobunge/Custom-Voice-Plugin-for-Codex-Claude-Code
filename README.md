@@ -60,6 +60,9 @@ auto_play = true                          # false = just render, no sound
 The agent can change the instruction itself via the `set_voice_instruction` tool
 (e.g. "make your voice deep and villainous from now on"). It persists to config.toml.
 
+Long replies (>40 words) are auto-chunked at sentence boundaries and stitched into
+one audio file — AuK starts garbling past ~50 words in a single render.
+
 ## Voice instruction cookbook
 
 The `instruction` is natural language; `{text}` is replaced with what the agent wants spoken.

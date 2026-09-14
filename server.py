@@ -106,7 +106,7 @@ def tool_speak(args):
     if ref != "none" and not os.path.exists(ref_path) and not os.path.isabs(ref):
         return {"error": f"voice '{ref}' not found in {VOICES_DIR}", "available": os.listdir(VOICES_DIR) if os.path.isdir(VOICES_DIR) else []}
     os.makedirs("/tmp/auk-voice", exist_ok=True)
-    out = tempfile.mktemp(prefix="reply-", suffix=".flac", dir="/tmp/auk-voice")
+    out = tempfile.mktemp(prefix="reply-", suffix=".wav", dir="/tmp/auk-voice")
     eng = get_engine()
     with _lock:
         try:

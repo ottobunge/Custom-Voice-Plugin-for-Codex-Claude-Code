@@ -53,6 +53,46 @@ from auk_engine import estimate_seconds
 check("engine duration estimate", estimate_seconds("one two three four five") == 3.0,
       str(estimate_seconds("one two three four five")))
 
+# 1c. long text is chunked at sentence boundaries, each under the garble limit
+from auk_engine import split_text, MAX_CHUNK_WORDS
+long_text = (" ".join(f"Sentence number {i} says a few words here." for i in range(1, 12)))
+chunks = split_text(long_text)
+check("long text chunked", len(chunks) >= 2 and all(len(c.split()) <= MAX_CHUNK_WORDS for c in chunks),
+      f"{[len(c.split()) for c in chunks]}")
+check("chunking preserves words", " ".join(chunks).split() == long_text.split())
+check("short text unchunked", split_text("hello world, this is a test") == ["hello world, this is a test"])
+mono = "word " * 95  # no sentence boundaries at all -> hard word split
+mono_chunks = split_text(mono)
+check("monster sentence hard-split", all(len(c.split()) <= MAX_CHUNK_WORDS for c in mono_chunks),
+      f"{[len(c.split()) for c in mono_chunks]}")
+
+# 1d. real render loop: chunk fan-out through a fake generate + fake save module
+import types, threading
+gen_texts = []
+class FakeGen:
+    def generate(self, messages, *, gen_seconds):
+        gen_texts.append(messages[0]["content"][0]["text"])
+        class T:  # minimal tensor stand-in: render() only reads .shape[-1]
+            def __init__(self, n): self.shape = [1, n]
+        return T(int(gen_seconds * 24000)), 24000
+fake_mod = types.ModuleType("auk.infer.infer_auk")
+def fake_save(audio, sr, path):
+    open(path, "wb").write(b"RIFFfake")
+    return round(audio.shape[-1] / sr, 1)
+fake_mod.save_audio = fake_save
+sys.modules["auk.infer.infer_auk"] = fake_mod
+eng = server.AukEngine.__new__(server.AukEngine)  # skip __init__/model load
+eng._engine = FakeGen()
+eng._lock = threading.Lock()
+pieces, sr2 = eng._render_all(split_text(long_text), 'Say: "{text}".', None)
+check("render fans out per chunk", len(pieces) == len(chunks) and sr2 == 24000
+      and all(c in t for c, t in zip(chunks, gen_texts)),
+      f"{len(gen_texts)} calls")
+single_out = os.path.join(tmp, "single.wav")
+secs = eng._write([pieces[0]], sr2, single_out)
+check("write single piece seconds", secs == pieces[0].shape[-1] / sr2 and os.path.exists(single_out),
+      f"{secs}")
+
 # 2. speak with missing voice -> clean error
 r = server.tool_speak({"text": "hi", "voice": "ghost.wav"})
 check("missing voice errors cleanly", "error" in r and "available" in r)
