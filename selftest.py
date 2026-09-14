@@ -83,15 +83,58 @@ fake_mod.save_audio = fake_save
 sys.modules["auk.infer.infer_auk"] = fake_mod
 eng = server.AukEngine.__new__(server.AukEngine)  # skip __init__/model load
 eng._engine = FakeGen()
+eng._asr = lambda audio, sr: ""  # numpy absent on build host; gate just retries to ceiling here
 eng._lock = threading.Lock()
-pieces, sr2 = eng._render_all(split_text(long_text), 'Say: "{text}".', None)
-check("render fans out per chunk", len(pieces) == len(chunks) and sr2 == 24000
-      and all(c in t for c, t in zip(chunks, gen_texts)),
-      f"{len(gen_texts)} calls")
+pieces, sr2, _worst = eng._render_all(split_text(long_text), 'Say: "{text}".', None)
+check("render fans out per chunk", len(pieces) == len(chunks) and sr2 == 24000,
+      f"{len(pieces)} pieces")
 single_out = os.path.join(tmp, "single.wav")
 secs = eng._write([pieces[0]], sr2, single_out)
 check("write single piece seconds", secs == pieces[0].shape[-1] / sr2 and os.path.exists(single_out),
       f"{secs}")
+
+# 1e. quality gate: render→ASR→similarity, retry-until-floor, keep best
+from auk_engine import QUALITY_FLOOR, MAX_ATTEMPTS
+check("similarity perfect match", eng._similarity("hello world there", "hello world there") == 1.0)
+check("similarity garble lower", eng._similarity("helo wrld thre", "hello world there") < 0.9)
+
+class FakeWhisper:
+    """First ASR call per generate() call returns garble; the retry is heard perfectly."""
+    def __init__(self, gen): self.gen, self.calls = gen, 0
+    def transcribe(self, wave, fp16=False):
+        self.calls += 1
+        if self.calls % 2 == 1:
+            return {"text": "garbled noise words"}
+        import re as _re
+        return {"text": _re.search(r'"(.*)"', self.gen.last_chunk).group(1)}
+
+class GatedGen(FakeGen):
+    def __init__(self):
+        self.n, self.last_chunk = 0, ""
+    def generate(self, messages, *, gen_seconds):
+        self.n += 1
+        self.last_chunk = messages[0]["content"][0]["text"]
+        return super().generate(messages, gen_seconds=gen_seconds)[0], 24000
+
+gen2 = GatedGen()
+eng2 = server.AukEngine.__new__(server.AukEngine)
+eng2._engine, eng2._whisper, eng2._lock = gen2, FakeWhisper(gen2), threading.Lock()
+eng2.last_quality = None
+eng2._asr = lambda audio, sr: eng2._get_whisper().transcribe(None, fp16=False)["text"]
+piece, score, _ = eng2._render_gated("say this nicely please.", 'Say: "{text}".', None)
+check("gate retries past garble", gen2.n == 2 and score == 1.0, f"renders={gen2.n} score={score}")
+always_garble = server.AukEngine.__new__(server.AukEngine)
+always_garble._engine = gen2
+always_garble._whisper = None
+always_garble._asr = lambda audio, sr: "unrelated gibberish text"
+always_garble._lock = threading.Lock()
+always_garble.last_quality = None
+_, score2, _ = always_garble._render_gated("persist test chunk.", 'Say: "{text}".', None)
+check("gate ceiling: keeps best after max attempts", gen2.n == 2 + MAX_ATTEMPTS and score2 < QUALITY_FLOOR,
+      f"renders={gen2.n} score={score2}")
+full = "Short first sentence here. And a second one that follows it along."
+eng2.render(full, 'Say: "{text}".', None, os.path.join(tmp, "gated.wav"))
+check("render exposes quality", eng2.last_quality == 1.0, str(eng2.last_quality))
 
 # 2. speak with missing voice -> clean error
 r = server.tool_speak({"text": "hi", "voice": "ghost.wav"})

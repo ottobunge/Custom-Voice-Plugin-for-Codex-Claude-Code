@@ -63,6 +63,11 @@ The agent can change the instruction itself via the `set_voice_instruction` tool
 Long replies (>40 words) are auto-chunked at sentence boundaries and stitched into
 one audio file — AuK starts garbling past ~50 words in a single render.
 
+Every chunk is quality-gated: it's transcribed with Whisper-small (CPU, ~461 MB
+download on first render) and compared against the source text; renders below 0.94
+word similarity are retried (up to 6 fresh takes each) and the best take is kept.
+The `speak` result reports the weakest chunk's score as `quality`.
+
 ## Voice instruction cookbook
 
 The `instruction` is natural language; `{text}` is replaced with what the agent wants spoken.

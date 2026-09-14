@@ -113,7 +113,8 @@ def tool_speak(args):
             secs = eng.render(text, instruction, None if ref == "none" else ref_path, out)
         except Exception as e:
             return {"error": f"render failed: {e}"}
-    result = {"seconds": secs, "file": out, "voice": os.path.basename(ref), **play_audio(out)}
+    result = {"seconds": secs, "file": out, "voice": os.path.basename(ref),
+              "quality": getattr(eng, "last_quality", None), **play_audio(out)}
     return result
 
 

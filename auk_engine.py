@@ -11,6 +11,9 @@ import os, re, sys, threading, time
 
 WORDS_PER_SEC = 2.5  # ponytail: flat rate estimate like our production rigs; +1 s margin
 MAX_CHUNK_WORDS = 40  # AuK garbles past ~50; chunk below it with sentence-boundary headroom
+QUALITY_FLOOR = 0.94  # ASR round-trip similarity floor per chunk (production gate)
+MAX_ATTEMPTS = 6      # fresh renders per chunk until floor; best kept, floor miss reported
+WHISPER_MODEL = "small"  # ~461 MB download on first gated render, cached in ~/.cache/whisper
 
 
 def estimate_seconds(text: str) -> float:
@@ -46,6 +49,8 @@ class AukEngine:
         self.ckpt_dir = ckpt_dir
         self.repo_dir = repo_dir
         self._engine = None
+        self._whisper = None  # lazy: loaded on first gated render, not at startup
+        self.last_quality = None  # weakest chunk similarity from the most recent render
         self._lock = threading.Lock()  # ponytail: one render at a time; GPU is single-tenant here
 
     def _load(self):
@@ -75,11 +80,48 @@ class AukEngine:
         return audio, sr
 
     def _render_all(self, chunks: list[str], instruction: str, ref_path: str):
-        pieces, sr = [], None
+        pieces, sr, worst = [], None, 1.0
         for chunk in chunks:
-            audio, sr = self._render_chunk(chunk, instruction, ref_path)
+            audio, score, sr = self._render_gated(chunk, instruction, ref_path)
             pieces.append(audio)
-        return pieces, sr
+            if score is not None:
+                worst = min(worst, score)  # report the weakest chunk, not the average
+        return pieces, sr, worst
+
+    def _get_whisper(self):
+        if self._whisper is None:
+            import torch
+            import whisper  # openai-whisper, venv dep (setup.sh)
+            self._whisper = whisper.load_model(WHISPER_MODEL)  # CPU; MPS path is flaky upstream
+        return self._whisper
+
+    def _similarity(self, said: str, wanted: str) -> float:
+        import difflib
+        return difflib.SequenceMatcher(None, said.split(), wanted.split()).ratio()
+
+    def _asr(self, audio, sr: int) -> str:
+        import numpy as np
+        import torch  # engine already loaded it; local import keeps module import torch-free
+        wave = audio.detach().to(torch.float32).cpu().numpy()
+        if wave.ndim == 2:
+            wave = wave.mean(axis=0)
+        if np.abs(wave).max() > 1.0:
+            wave = wave / np.abs(wave).max()  # ponytail: peak norm; AuK outputs are already ~[-1,1]
+        with torch.no_grad():
+            result = self._get_whisper().transcribe(wave.astype(np.float32), fp16=False)
+        return result["text"]
+
+    def _render_gated(self, chunk: str, instruction: str, ref_path: str | None):
+        """Render → Whisper round-trip → similarity vs source; retry fresh renders, keep best."""
+        best, best_score, sr = None, -1.0, None
+        for attempt in range(MAX_ATTEMPTS):
+            audio, sr = self._render_chunk(chunk, instruction, ref_path)
+            score = self._similarity(self._asr(audio, sr), chunk)
+            if best is None or score > best_score:
+                best, best_score = audio, score
+            if best_score >= QUALITY_FLOOR:
+                break
+        return best, best_score, sr
 
     def _write(self, pieces: list, sr: int, out_path: str) -> float:
         from auk.infer.infer_auk import save_audio
@@ -94,5 +136,6 @@ class AukEngine:
     def render(self, text: str, instruction: str, ref_path: str | None, out_path: str) -> float:
         with self._lock:
             self._load()
-            pieces, sr = self._render_all(split_text(text), instruction, ref_path)
+            pieces, sr, worst = self._render_all(split_text(text), instruction, ref_path)
+            self.last_quality = round(worst, 3)  # weakest chunk score; None if ASR unavailable
             return self._write(pieces, sr, out_path)

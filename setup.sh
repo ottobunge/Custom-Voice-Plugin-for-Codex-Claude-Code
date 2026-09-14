@@ -20,7 +20,7 @@ python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' || {
 [ -d venv ] || python3 -m venv venv
 ./venv/bin/pip install --upgrade pip wheel
 # torch comes from AuK's own pin (torch>=2.7,<2.8); MPS wheels are the default on arm64 macs
-./venv/bin/pip install soundfile "huggingface_hub[cli]"
+./venv/bin/pip install soundfile "huggingface_hub[cli]" openai-whisper
 
 # AuK source
 [ -d AuK ] || git clone https://github.com/Tencent-Hunyuan/AuK.git
