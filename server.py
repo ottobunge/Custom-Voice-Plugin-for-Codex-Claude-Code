@@ -8,7 +8,7 @@ Stdio MCP (JSON-RPC 2.0, no deps beyond stdlib + auk_engine). Tools:
   list_voices()                               -> available reference voices
 Config: ~/.config/auk-voice/config.toml  (see config.example.toml)
 """
-import base64, json, os, sys, subprocess, tempfile, threading
+import base64, json, os, re, sys, subprocess, tempfile, threading
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from auk_engine import AukEngine  # noqa: E402
@@ -48,18 +48,22 @@ def load_config():
 
 
 def save_instruction():
-    """Persist runtime instruction changes back to config.toml (simple flat writer)."""
+    """Persist runtime instruction/ref changes back into the [voice] section.
+
+    ponytail: section-aware regex rewrite so comments elsewhere survive; full
+    tomllib round-trip if config ever grows beyond these two keys.
+    """
     os.makedirs(CONFIG_DIR, exist_ok=True)
-    lines = []
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            lines = [l for l in f.readlines() if not l.startswith(("instruction = ", "ref = "))]
-    inst = _state["voice_instruction"].replace('"', '\\"')
-    lines.append(f'ref = "{_state["voice_ref"]}"\n')
-    lines.append(f'instruction = "{inst}"\n')
-    # flat-file fallback: rewrite minimal sections if the file wasn't sectioned
+    inst = _state["voice_instruction"].replace('"', r'\"')
+    ref = _state["voice_ref"].replace('"', r'\"')
+    block = f'[voice]\nref = "{ref}"\ninstruction = "{inst}"\n'
+    text = open(CONFIG_PATH, encoding="utf-8").read() if os.path.exists(CONFIG_PATH) else ""
+    if re.search(r'^\[voice\]\s*$', text, re.M):
+        text = re.sub(r'^\[voice\]\s*$(?:\n(?!\[).*)*', block, text, flags=re.M | re.S)
+    else:
+        text = text.rstrip("\n") + ("\n\n" if text.strip() else "") + block
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        f.writelines(lines)
+        f.write(text)
 
 
 def log(msg):

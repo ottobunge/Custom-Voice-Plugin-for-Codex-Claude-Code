@@ -67,6 +67,13 @@ r = server.tool_set_instruction({"instruction": 'Say like a pirate: "{text}".'})
 check("set instruction ok", r.get("ok") is True)
 check("persisted to config.toml", os.path.exists(server.CONFIG_PATH)
       and "pirate" in open(server.CONFIG_PATH).read())
+# 4b. round-trip: what save_instruction writes into [voice] is what load_config reads back
+server._state["voice_ref"] = "default.wav"
+saved_inst = server._state["voice_instruction"]
+server._state["voice_instruction"] = "cleared"
+server.load_config()
+check("config round-trip reload", server._state["voice_instruction"] == saved_inst,
+      repr(server._state["voice_instruction"]))
 server.load_config = lambda: None  # ensure reload path doesn't clobber state check
 check("state holds new instruction", server._state["voice_instruction"].startswith("Say like a pirate"))
 

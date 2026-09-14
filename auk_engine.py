@@ -28,12 +28,16 @@ class AukEngine:
         if os.path.isdir(src) and src not in sys.path:
             sys.path.insert(0, src)
         from auk.infer.infer_auk import AukInfer  # noqa: deferred — heavy
+        import torch  # already loaded by infer_auk
         cfg = os.path.join(self.ckpt_dir, "AuK-Flash", "config.yaml")
         ckpt = os.path.join(self.ckpt_dir, "AuK-Flash", "auk_flash.safetensors")
         for p in (cfg, ckpt):
             if not os.path.exists(p):
                 raise FileNotFoundError(f"missing {p} — run setup.sh first")
-        self._engine = AukInfer(cfg, ckpt)
+        qwen = os.path.join(self.ckpt_dir, "Qwen2.5-Omni-3B")
+        # upstream default is cuda-or-cpu; Apple Silicon needs MPS passed explicitly
+        device = "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else None
+        self._engine = AukInfer(cfg, ckpt, device=device, qwen_path=qwen)
 
     def render(self, text: str, instruction: str, ref_path: str | None, out_path: str) -> float:
         with self._lock:
@@ -46,4 +50,4 @@ class AukEngine:
             audio, sr = self._engine.generate(messages, gen_seconds=gen_seconds)
             from auk.infer.infer_auk import save_audio
             save_audio(audio, sr, out_path)
-            return gen_seconds
+            return round(audio.shape[-1] / sr, 1)  # actual rendered length, not the estimate
