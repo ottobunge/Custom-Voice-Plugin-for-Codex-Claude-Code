@@ -1,0 +1,13 @@
+# Copy to ~/.config/auk-voice/config.toml and edit.
+
+[server]
+# Defaults; only set if you moved things.
+# ckpt_dir = "~/.config/auk-voice/ckpts"
+# repo_dir = "~/.config/auk-voice/AuK"
+
+[voice]
+ref = "default.wav"   # a .wav in voices/ — 3-15 s of clean speech. Use "none" for pure-description voices.
+instruction = 'Say the following with the same voice: "{text}".'
+
+[playback]
+auto_play = true
